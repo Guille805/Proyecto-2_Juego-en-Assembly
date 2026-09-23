@@ -1,4 +1,10 @@
+import argparse
+import re
+from pathlib import Path
+
 def registro(nombre):
+    if not re.fullmatch(r"x(?:[0-9]|1[0-5])", nombre):
+        raise ValueError(f"Registro RV32E invalido: {nombre}")
     return int(nombre[1:])
 
 def codificar_lui(rd, inmediato):
@@ -6,10 +12,7 @@ def codificar_lui(rd, inmediato):
 
     return (inmediato << 12) | (rd << 7) | opcode
 
-def codificar_addi(rd, rs1, inmediato):
-    opcode = 0x13
-    funct3 = 0b000
-
+def codificar_itype(rd, rs1, inmediato, funct3, opcode):
     inmediato &= 0xFFF
 
     return (
@@ -19,6 +22,46 @@ def codificar_addi(rd, rs1, inmediato):
         | (rd << 7)
         | opcode
     )
+
+
+def codificar_addi(rd, rs1, inmediato):
+    return codificar_itype(rd, rs1, inmediato, 0b000, 0x13)
+
+
+def codificar_slti(rd, rs1, inmediato):
+    return codificar_itype(rd, rs1, inmediato, 0b010, 0x13)
+
+
+def codificar_sltiu(rd, rs1, inmediato):
+    return codificar_itype(rd, rs1, inmediato, 0b011, 0x13)
+
+
+def codificar_xori(rd, rs1, inmediato):
+    return codificar_itype(rd, rs1, inmediato, 0b100, 0x13)
+
+
+def codificar_ori(rd, rs1, inmediato):
+    return codificar_itype(rd, rs1, inmediato, 0b110, 0x13)
+
+
+def codificar_andi(rd, rs1, inmediato):
+    return codificar_itype(rd, rs1, inmediato, 0b111, 0x13)
+
+
+def codificar_slli(rd, rs1, shamt):
+    shamt &= 0x1F
+    return ((shamt << 20) | (rs1 << 15) | (0b001 << 12) | (rd << 7) | 0x13)
+
+
+def codificar_srli(rd, rs1, shamt):
+    shamt &= 0x1F
+    return ((shamt << 20) | (rs1 << 15) | (0b101 << 12) | (rd << 7) | 0x13)
+
+
+def codificar_srai(rd, rs1, shamt):
+    shamt &= 0x1F
+    return ((0x400 | shamt) << 20 | (rs1 << 15) | (0b101 << 12) | (rd << 7) | 0x13)
+
 
 def codificar_jal(rd, offset):
     opcode = 0x6F
@@ -40,24 +83,23 @@ def codificar_jal(rd, offset):
     )
 
 def analizar_programa(lineas):
-    etiquetas = {}
-    instrucciones = []
-
+    etiquetas, instrucciones = {}, []
     direccion = 0
-
-    for linea in lineas:
-        linea = linea.split("#")[0].strip()
-
+    for numero, linea in enumerate(lineas, 1):
+        linea = linea.split("#", 1)[0].strip()
+        while ":" in linea:
+            nombre, linea = (parte.strip() for parte in linea.split(":", 1))
+            if not re.fullmatch(r"[A-Za-z_][A-Za-z_0-9]*", nombre):
+                raise ValueError(f"Linea {numero}: etiqueta invalida: {nombre}")
+            if nombre in etiquetas:
+                raise ValueError(f"Linea {numero}: etiqueta duplicada: {nombre}")
+            etiquetas[nombre] = direccion
         if not linea:
             continue
-
-        if linea.endswith(":"):
-            nombre = linea[:-1].strip()
-            etiquetas[nombre] = direccion
-        else:
-            instrucciones.append((direccion, linea))
-            direccion += 4
-
+        if linea == ".section .text" or re.fullmatch(r"\.global\s+[A-Za-z_][A-Za-z_0-9]*", linea):
+            continue
+        instrucciones.append((direccion, linea))
+        direccion += 4
     return etiquetas, instrucciones
 
 def calcular_offset_jal(direccion_jal, etiqueta, etiquetas):
@@ -187,7 +229,7 @@ def codificar_branch(rs1, rs2, offset, funct3):
         | opcode
     )
 
-def codificar_instruccion(instruccion, direccion_actual, etiquetas):
+def _codificar_instruccion(instruccion, direccion_actual, etiquetas):
     partes = instruccion.replace(",", "").split()
 
     nombre = partes[0]
@@ -204,6 +246,39 @@ def codificar_instruccion(instruccion, direccion_actual, etiquetas):
         inmediato = int(partes[3], 0)
 
         return codificar_addi(rd, rs1, inmediato)
+
+    if nombre in {"slti", "sltiu", "xori", "ori", "andi"}:
+        rd = registro(partes[1])
+        rs1 = registro(partes[2])
+        inmediato = int(partes[3], 0)
+
+        if nombre == "slti":
+            return codificar_slti(rd, rs1, inmediato)
+        if nombre == "sltiu":
+            return codificar_sltiu(rd, rs1, inmediato)
+        if nombre == "xori":
+            return codificar_xori(rd, rs1, inmediato)
+        if nombre == "ori":
+            return codificar_ori(rd, rs1, inmediato)
+        return codificar_andi(rd, rs1, inmediato)
+
+    if nombre in {"slli", "srli", "srai"}:
+        rd = registro(partes[1])
+        rs1 = registro(partes[2])
+        shamt = int(partes[3], 0)
+
+        if nombre == "slli":
+            return codificar_slli(rd, rs1, shamt)
+        if nombre == "srli":
+            return codificar_srli(rd, rs1, shamt)
+        return codificar_srai(rd, rs1, shamt)
+
+    if nombre == "jalr":
+        rd = registro(partes[1])
+        offset_base = partes[2]
+        inmediato = int(offset_base.split("(")[0], 0)
+        rs1 = registro(offset_base.split("(")[1].replace(")", ""))
+        return codificar_itype(rd, rs1, inmediato, 0b000, 0x67)
 
     if nombre == "lw":
         rd = registro(partes[1])
@@ -236,35 +311,35 @@ def codificar_instruccion(instruccion, direccion_actual, etiquetas):
         rs2 = registro(partes[3])
 
         return codificar_add(rd, rs1, rs2)
-    
+
     if nombre == "sub":
         rd = registro(partes[1])
         rs1 = registro(partes[2])
         rs2 = registro(partes[3])
 
         return codificar_sub(rd, rs1, rs2)
-    
+
     if nombre == "and":
         rd = registro(partes[1])
         rs1 = registro(partes[2])
         rs2 = registro(partes[3])
 
         return codificar_and(rd, rs1, rs2)
-    
+
     if nombre == "or":
         rd = registro(partes[1])
         rs1 = registro(partes[2])
         rs2 = registro(partes[3])
 
         return codificar_or(rd, rs1, rs2)
-    
+
     if nombre == "xor":
         rd = registro(partes[1])
         rs1 = registro(partes[2])
         rs2 = registro(partes[3])
 
         return codificar_xor(rd, rs1, rs2)
-    
+
     if nombre == "beq":
         rs1 = registro(partes[1])
         rs2 = registro(partes[2])
@@ -282,6 +357,24 @@ def codificar_instruccion(instruccion, direccion_actual, etiquetas):
         offset = etiquetas[etiqueta] - direccion_actual
 
         return codificar_branch(rs1, rs2, offset, 0b001)
+
+    if nombre == "blt":
+        rs1 = registro(partes[1])
+        rs2 = registro(partes[2])
+        etiqueta = partes[3]
+
+        offset = etiquetas[etiqueta] - direccion_actual
+
+        return codificar_branch(rs1, rs2, offset, 0b100)
+
+    if nombre == "bge":
+        rs1 = registro(partes[1])
+        rs2 = registro(partes[2])
+        etiqueta = partes[3]
+
+        offset = etiquetas[etiqueta] - direccion_actual
+
+        return codificar_branch(rs1, rs2, offset, 0b101)
 
     if nombre == "bltu":
         rs1 = registro(partes[1])
@@ -304,46 +397,80 @@ def codificar_instruccion(instruccion, direccion_actual, etiquetas):
     return None
 
 
-with open("game.s", "r") as archivo:
-    programa = archivo.readlines()
 
-etiquetas, instrucciones = analizar_programa(programa)
+def codificar_instruccion(instruccion, direccion_actual, etiquetas):
+    partes = instruccion.replace(",", " ").split()
+    if not partes:
+        raise ValueError("Instruccion vacia")
+    nombre = partes[0]
+    registros = {"add", "sub", "and", "or", "xor"}
+    inmediatos = {"addi", "slti", "sltiu", "xori", "ori", "andi"}
+    branches = {"beq", "bne", "blt", "bge", "bltu", "bgeu"}
+    if nombre in {"slli", "srli", "srai", "sll", "srl", "sra"}:
+        raise ValueError("Espino no implementa desplazamientos en la ALU")
+    cuenta = 4 if nombre in registros | inmediatos | branches else 3
+    if nombre not in registros | inmediatos | branches | {"lui", "lw", "sw", "jal", "jalr"}:
+        raise ValueError(f"Instruccion no soportada: {nombre}")
+    if len(partes) != cuenta:
+        raise ValueError(f"{nombre}: se esperaban {cuenta-1} operandos")
+    registro(partes[1])
+    if nombre in registros | inmediatos | branches:
+        registro(partes[2])
+    if nombre in registros:
+        registro(partes[3])
+    if nombre in inmediatos:
+        validar_rango(int(partes[3], 0), -2048, 2047)
+    if nombre == "lui":
+        validar_rango(int(partes[2], 0), 0, 0xfffff)
+    if nombre in {"lw", "sw", "jalr"}:
+        memoria = re.fullmatch(r"([^()]+)\((x[0-9]+)\)", partes[2])
+        if not memoria:
+            raise ValueError("Se esperaba offset(xN)")
+        validar_rango(int(memoria[1], 0), -2048, 2047)
+        registro(memoria[2])
+    if nombre in branches | {"jal"}:
+        destino = partes[-1]
+        if destino not in etiquetas:
+            raise ValueError(f"Etiqueta inexistente: {destino}")
+        offset = etiquetas[destino] - direccion_actual
+        limite = 4096 if nombre in branches else 1048576
+        validar_rango(offset, -limite, limite-1)
+        if offset % 4:
+            raise ValueError("Salto no alineado a 4 bytes")
+    return _codificar_instruccion(" ".join(partes), direccion_actual, etiquetas)
 
-print("Etiquetas:")
-print(etiquetas)
 
-print("\nInstrucciones:")
-for direccion, instruccion in instrucciones:
-    print(direccion, instruccion)
+def validar_rango(valor, minimo, maximo):
+    if not minimo <= valor <= maximo:
+        raise ValueError(f"Inmediato {valor} fuera de rango [{minimo}, {maximo}]")
 
-for direccion, instruccion in instrucciones:
-    partes = instruccion.split()
 
-    if partes[0] == "jal":
-        etiqueta = partes[2]
-        offset = calcular_offset_jal(direccion, etiqueta, etiquetas)
+def ensamblar(texto, max_words=511):
+    etiquetas, instrucciones = analizar_programa(texto.splitlines())
+    if len(instrucciones) > max_words:
+        raise ValueError(f"Programa excede {max_words} palabras disponibles")
+    codigos = []
+    for direccion, instruccion in instrucciones:
+        try:
+            codigos.append(codificar_instruccion(instruccion, direccion, etiquetas))
+        except ValueError as exc:
+            raise ValueError(f"PC 0x{direccion:04x}, {instruccion}: {exc}") from exc
+    return codigos
 
-        print("\nOffset del jal:")
-        print(offset)
 
-        codigo = codificar_jal(0, offset)
-        print(f"Código: {codigo:08x}")
+def main():
+    parser = argparse.ArgumentParser(description="Assembler del subconjunto Espino RV32E")
+    parser.add_argument("source", nargs="?", type=Path, default=Path(__file__).with_name("game.s"))
+    parser.add_argument("-o", "--output", type=Path)
+    args = parser.parse_args()
+    try:
+        words = ensamblar(args.source.read_text(encoding="utf-8"))
+        output = args.output or args.source.with_suffix(".hex")
+        output.write_text("".join(f"{word:08x}\n" for word in words), encoding="ascii")
+    except (OSError, ValueError) as exc:
+        parser.exit(1, f"Error: {exc}\n")
+    print(f"{output}: {len(words)} palabras")
 
-print("\nPrueba de instrucciones:")
 
-codigos = []
-
-for direccion, instruccion in instrucciones:
-    codigo = codificar_instruccion(instruccion, direccion, etiquetas)
-
-    if codigo is not None:
-        codigos.append(codigo)
-        print(f"{direccion:02d} {instruccion} -> {codigo:08x}")
-        print("\nCódigos generados:")
-
-with open("game.hex", "w") as archivo:
-    for codigo in codigos:
-        archivo.write(f"{codigo:08x}\n")
-
-print("\nArchivo game.hex generado.")
-    
+if __name__ == "__main__":
+    main()

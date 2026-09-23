@@ -1,10 +1,6 @@
 # Clock
 set_io i_Clk 15
 
-# UART
-set_io i_UART_RX 73
-set_io o_UART_TX 74
-
 # LEDs
 set_io o_LED[0] 56
 set_io o_LED[1] 57

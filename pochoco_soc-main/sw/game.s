@@ -1,51 +1,26 @@
 
 # Juego de reflejos en Espino Core / Pochoco SoC
-# Restricciones del hardware/assembler (documentar en el informe):
-#   - RV32E: registros x0..x15 (x0 = cero fijo)
-#   - No hay jalr -> no existen subrutinas con retorno variable.
-#     Todo el programa es codigo plano; los bloques que se
-#     necesitan mas de una vez (division, empaquetado BCD) estan
-#     duplicados a proposito.
-#   - No hay shift (sll/srl/sra): "x << 1" se hace con "add x,x,x".
-#   - No hay mul/div: division por resta repetida (bltu + sub).
-#   - No hay andi/slt: "and" solo registro-registro; las pruebas
-#     de signo/bit31 se hacen con bgeu/bltu (comparacion sin signo).
-#
-# Mapa de memoria (pochoco_periph, base 0x80000000):
-#   +0x00 DIGIT  (escritura) byte con 2 nibbles hex -> 7 segmentos
-#   +0x04 LED    (escritura) 4 bits, one-hot
-#   +0x08 BTN    (lectura)   4 bits, one-hot
-#   +0x0C CYCLES (lectura)   contador libre de 32 bits, +1 por ciclo
-#
-# Base de tiempo (CLK_HZ = 12 MHz):
-#   CICLOS_3S         = 3 * CLK_HZ        = 36 000 000
-#   CYCLES_PER_TENTH  = CLK_HZ / 10       =  1 200 000
-#   decimas = round(delta_ciclos / CYCLES_PER_TENTH)
-#           = (delta_ciclos + CYCLES_PER_TENTH/2) / CYCLES_PER_TENTH
-#
-# Mapa de registros (fijos durante todo el programa):
-#   x1 = PERIPH_BASE (0x80000000). Tambien se reutiliza como
-#        constante de comparacion "bit31 en 1" para el LFSR.
-#   x2 = CICLOS_3S      (36 000 000)
-#   x3 = CYCLES_PER_TENTH (1 200 000)
-#   x4 = mascara 3 (0b11), para extraer los 2 bits bajos del LFSR
-#   x5 = polinomio del LFSR (0x04C11DB7, CRC-32, tap maximal)
-#   x6 = estado del LFSR (semilla no nula al inicio)
-#   x7 = RONDAS objetivo (10)
-#   x8 = rondas correctas acumuladas
-#   x9 = suma de decimas acumuladas (para el promedio)
-#   x10..x15 = temporales, reutilizados libremente entre bloques
-# ============================================================
+# RV32E x0..x15; shifts/mul/div are unavailable. JALR and ANDI are supported.
+# Clock: Go Board oscillator, 25 MHz. All times truncate to tenths.
+# MMIO base 0x80000000: +0 display, +4 LEDs, +8 debounced buttons,
+# +12 free-running cycles, +16 cycle captured by the latest LED write.
+# Buttons must be released before every round; simultaneous buttons are errors.
+# x1 base, x2 75,000,000 cycles (3 s), x3 2,500,000 cycles (0.1 s),
+# x4 mask 3, x5 LFSR polynomial, x6 seed, x7 rounds, x8 successes,
+# x9 sum of tenths (uncapped), x10..x15 scratch.
+# RAM word 2044 keeps fractional cycles, carried into x9 before averaging.
+# Display saturates at 99; the average includes the full measured times.
+# No response for 2^31 cycles (85.9 s) produces EE and retries the round.
 
 # --- constantes iniciales ---
 lui   x1, 0x80000
 addi  x1, x1, 0            # x1 = PERIPH_BASE = 0x80000000
 
-lui   x2, 0x2255
-addi  x2, x2, 0x100        # x2 = CICLOS_3S = 36 000 000
+lui   x2, 0x4787
+addi  x2, x2, -1856        # x2 = CICLOS_3S = 75 000 000
 
-lui   x3, 0x125
-addi  x3, x3, -128         # x3 = CYCLES_PER_TENTH = 1 200 000
+lui   x3, 0x262
+addi  x3, x3, 1440         # x3 = CYCLES_PER_TENTH = 2 500 000
 
 addi  x4, x0, 3            # x4 = mascara 0b11
 
@@ -57,6 +32,7 @@ addi  x6, x0, 1            # x6 = semilla LFSR (no nula, arbitraria)
 addi  x7, x0, 10           # x7 = RONDAS
 addi  x8, x0, 0            # x8 = rondas correctas
 addi  x9, x0, 0            # x9 = suma de decimas
+sw    x0, 2044(x0)         # resto de ciclos acumulados
 
 # ============================================================
 # Ronda 0 de 11 (no cuenta para el puntaje ni para el promedio):
@@ -93,6 +69,8 @@ WARMUP_RELEASE:
 
 # ============================================================
 ROUND_START:
+    lw    x10, 8(x1)
+    bne   x10, x0, ROUND_START # nueva ronda solo al soltar todos los botones
     addi  x10, x0, 15
     sw    x10, 4(x1)        # 4 LEDs encendidos
 
@@ -103,33 +81,28 @@ WAIT3S:
     sub   x12, x11, x10
     bltu  x12, x2, WAIT3S    # mientras delta < CICLOS_3S, seguir
 
-    # --- sembrar con timing humano y avanzar el LFSR (3 pasos) ---
+    lw    x10, 8(x1)
+    bne   x10, x0, ROUND_START # pulsacion anticipada reinicia preparacion
+
+    # --- sembrar con timing humano y avanzar el LFSR (32 pasos) ---
     lw    x10, 12(x1)
     xor   x6, x6, x10
 
-    bgeu  x6, x1, TAP1
+    bne   x6, x0, SEED_OK
+    addi  x6, x0, 1
+SEED_OK:
+    # Mix every seed bit into the low bits used to select a LED.
+    addi  x11, x0, 32
+RNG_STEP:
+    bgeu  x6, x1, RNG_TAP
     add   x6, x6, x6
-    jal   x0, NOTAP1
-TAP1:
-    add   x6, x6, x6
-    xor   x6, x6, x5
-NOTAP1:
-
-    bgeu  x6, x1, TAP2
-    add   x6, x6, x6
-    jal   x0, NOTAP2
-TAP2:
+    jal   x0, RNG_NEXT
+RNG_TAP:
     add   x6, x6, x6
     xor   x6, x6, x5
-NOTAP2:
-
-    bgeu  x6, x1, TAP3
-    add   x6, x6, x6
-    jal   x0, NOTAP3
-TAP3:
-    add   x6, x6, x6
-    xor   x6, x6, x5
-NOTAP3:
+RNG_NEXT:
+    addi  x11, x11, -1
+    bne   x11, x0, RNG_STEP
 
     and   x10, x6, x4        # x10 = indice LED objetivo (0-3)
 
@@ -153,11 +126,16 @@ PAT2:
 PATSET:
     sw    x12, 4(x1)          # solo el LED objetivo encendido
 
-    lw    x13, 12(x1)         # inicio de la medicion de reaccion
+    lw    x13, 16(x1)         # inicio de la medicion de reaccion
 
 WAIT_BTN:
     lw    x14, 8(x1)
-    beq   x14, x0, WAIT_BTN    # sin pulsacion, seguir esperando
+    bne   x14, x0, GOT_BTN
+    lw    x15, 12(x1)
+    sub   x10, x15, x13
+    bgeu  x10, x1, ERROR      # timeout at 2^31 cycles, before counter ambiguity
+    jal   x0, WAIT_BTN
+GOT_BTN:
 
     lw    x15, 12(x1)          # fin de la medicion
     bne   x14, x12, ERROR       # boton distinto del objetivo -> error
@@ -165,11 +143,6 @@ WAIT_BTN:
                                  #  porque BTN ya no seria one-hot valido)
 
     sub   x10, x15, x13          # delta de ciclos de reaccion
-
-    # redondeo: + CYCLES_PER_TENTH/2 (600 000)
-    lui   x11, 0x92
-    addi  x11, x11, 1984
-    add   x10, x10, x11
 
     # division por CYCLES_PER_TENTH (x3), resta repetida
     addi  x11, x0, 0
@@ -179,6 +152,15 @@ DIV_TENTH:
     addi  x11, x11, 1
     jal   x0, DIV_TENTH
 DIV_TENTH_END:
+    # Preserve fractional cycles so the final mean is floor(sum(cycles)/25MHz).
+    lw    x14, 2044(x0)
+    add   x14, x14, x10
+    bltu  x14, x3, REMAINDER_OK
+    sub   x14, x14, x3
+    addi  x9, x9, 1
+REMAINDER_OK:
+    sw    x14, 2044(x0)
+    add   x9, x9, x11
     # x11 = decimas de esta ronda
 
     # saturar a 99 (display de 2 digitos)
@@ -189,7 +171,7 @@ SATURATE:
     add   x11, x0, x14
 NOSAT:
 
-    add   x9, x9, x11           # acumular para el promedio
+    # El promedio ya acumulo el valor sin saturar.
 
     # --- empaquetar x11 (0-99) como 2 nibbles hex para el display ---
     addi  x12, x0, 0            # decenas
@@ -237,6 +219,12 @@ DIV_AVG:
     addi  x11, x11, 1
     jal   x0, DIV_AVG
 DIV_AVG_END:
+    # Saturate only the displayed average.
+    addi  x14, x0, 99
+    bgeu  x14, x11, AVG_DISPLAY
+    addi  x11, x0, 99
+AVG_DISPLAY:
+    sw    x0, 4(x1)
     # x11 = promedio en decimas
 
     addi  x12, x0, 0

@@ -1,3 +1,5 @@
+> **Revision del juego:** instrucciones actuales, mapa MMIO y pruebas en [REVISION.md](REVISION.md).
+
 # Pochoco SoC & Espino Core
 
 > Meet Pochoco SoC and Espino Core. Inspired by the native flora of the Pochoco trails, it is an entry-level, highly efficient architecture designed to flourish in resource-constrained environments.
@@ -40,21 +42,21 @@ To synthesize and build the project, you will need the open-source FPGA toolchai
 2. Once installed, ~~blindly copy-paste~~ (we strongly encourage reading the Makefile first to make sure we aren't deleting your home directory) the following command in the project root to generate and program the final bitstream:
 
 ```bash
-make all
+make all   # build only; use make prog to flash
 ```
 
 ## Software
 
-The `sw/` folder holds the RV32E assembly example programs that run on the Espino Core (`blink.s`, `7seg.s`, `buttons_leds.s`), plus a `Makefile` to assemble them into the `.hex` files the RTL loads at boot via `$readmemh`.
+The `sw/` folder contains the game and RV32E examples. Use the project assembler:
 
-You'll need a RISC-V toolchain on your `PATH` (`riscv64-unknown-elf-{as,ld,objcopy}` on Debian/Ubuntu/WSL via `sudo apt install gcc-riscv64-unknown-elf`, or `brew install riscv64-unknown-elf-gcc` on macOS). If your toolchain uses a different prefix, override it on the command line rather than editing the Makefile:
-
-```bash
-cd sw
-make blink                        # assembles blink.s -> blink.hex
-make PREFIX=riscv64-elf- blink    # if your toolchain uses a different prefix
+```sh
+python sw/assembler.py sw/game.s -o sw/game.hex
+python -B tests/run_tests.py
 ```
 
-Drop a new `<name>.s` file in `sw/` and `make <name>` picks it up automatically, no `Makefile` changes needed. Don't forget to change the MemFile in pochoco_soc.v.
+From `sw/`, `make` builds all examples using the same Python assembler. The top-level
+build regenerates the game image automatically. No external RISC-V assembler is needed.
 
-**CATCH:** The core implements [RV32E](https://docs.riscv.org/reference/isa/v20260120/unpriv/rv32.html), with one thing worth knowing: shift instructions (`SLL`/`SRL`/`SRA`/`SLLI`/`SRLI`/`SRAI`) are decoded correctly but disabled in the ALU to save LUTs on the target FPGA, so they currently execute as `ADD` instead. Avoid shifts in your assembly, or design your own shifter...
+Shifts are intentionally absent from the ALU to save LUTs. The assembler rejects
+them and the hardware decoder suppresses their side effects. See [REVISION.md](REVISION.md)
+for the supported subset, game timing, updated MMIO registers and verification limits.

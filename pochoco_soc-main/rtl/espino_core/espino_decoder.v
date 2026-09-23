@@ -241,6 +241,26 @@ module espino_decoder (
 
       default: illegal_insn_o = 1'b1;
     endcase
+    if (rf_we_o && instr_i[11]) illegal_insn_o = 1'b1;
+    if ((opcode == OPCODE_OP || opcode == OPCODE_OPIMM ||
+         opcode == OPCODE_LOAD || opcode == OPCODE_STORE ||
+         opcode == OPCODE_BRANCH || opcode == OPCODE_JALR) && instr_i[19])
+      illegal_insn_o = 1'b1;
+    if ((opcode == OPCODE_OP || opcode == OPCODE_STORE ||
+         opcode == OPCODE_BRANCH) && instr_i[24]) illegal_insn_o = 1'b1;
+    if (opcode == OPCODE_OP && funct7 != 7'h00 &&
+        !(funct7 == 7'h20 && funct3 == 3'b000)) illegal_insn_o = 1'b1;
+    if ((opcode == OPCODE_OP || opcode == OPCODE_OPIMM) &&
+        (funct3 == 3'b001 || funct3 == 3'b101)) illegal_insn_o = 1'b1;
+    if (opcode == OPCODE_SYSTEM) illegal_insn_o = 1'b1;
+    if (illegal_insn_o) begin
+      rf_we_o = 1'b0;
+      lsu_req_o = 1'b0;
+      lsu_we_o = 1'b0;
+      is_branch_o = 1'b0;
+      is_jal_o = 1'b0;
+      is_jalr_o = 1'b0;
+    end
   end
 
 endmodule

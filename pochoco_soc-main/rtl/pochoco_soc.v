@@ -10,7 +10,7 @@
 
 module pochoco_soc #(
   parameter NumWords   = 512,
-  parameter MemFile    = "../sw/game.hex"
+  parameter MemFile    = "sw/game.hex"
 ) (
   input  wire       i_Clk,
 
@@ -110,6 +110,7 @@ module pochoco_soc #(
     .we_i      (data_we),
     .addr_i    (data_addr[7:0]),
     .wdata_i   (data_wdata),
+    .be_i      (data_be),
     .rdata_o   (per_rdata),
     .leds_o    (o_LED),
     .btn_i     (i_Switch),
@@ -126,6 +127,7 @@ module pochoco_soc #(
     .we_i       (data_we),
     .addr_i     (data_addr[7:0]),
     .wdata_i    (data_wdata),
+    .be_i       (data_be),
     .rdata_o    (spi_rdata),
     .spi_sclk_i (i_SPI_SCLK),
     .spi_mosi_i (i_SPI_MOSI),

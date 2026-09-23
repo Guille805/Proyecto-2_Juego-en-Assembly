@@ -19,6 +19,7 @@ module pochoco_spi_slave (
   input  wire        we_i,
   input  wire [7:0]  addr_i,
   input  wire [31:0] wdata_i,
+  input  wire [3:0]  be_i,
   output reg  [31:0] rdata_o,
 
   input  wire        spi_sclk_i,
@@ -35,7 +36,7 @@ module pochoco_spi_slave (
   wire [5:0] off    = addr_i[7:2];
   wire       access = sel_i & req_i;
   wire       rd     = access & ~we_i;
-  wire       wr     = access &  we_i;
+  wire       wr     = access & we_i & be_i[0];
 
   reg [2:0] sclk_sync, mosi_sync, cs_sync;
   always @(posedge clk_i or negedge rst_ni) begin
@@ -59,28 +60,28 @@ module pochoco_spi_slave (
   // Shift engine
   reg [7:0] rx_shift;
   reg [7:0] tx_shift;
-  reg [3:0] bit_cnt;
+  reg [2:0] bit_cnt;
   reg [7:0] tx_hold;
   reg [7:0] price_q;
   reg       new_price_q;
 
-  wire byte_done = sclk_r & (bit_cnt == 4'd7);
+  wire byte_done = cs_active & ~cs_assert & sclk_r & (bit_cnt == 3'd7);
 
   always @(posedge clk_i or negedge rst_ni) begin
     if (!rst_ni) begin
       rx_shift <= 8'h00;
       tx_shift <= 8'h00;
-      bit_cnt  <= 4'd0;
+      bit_cnt  <= 3'd0;
     end else if (cs_assert) begin
       tx_shift <= tx_hold;
-      bit_cnt  <= 4'd0;
+      bit_cnt  <= 3'd0;
     end else if (cs_active) begin
       if (sclk_r) begin
         rx_shift <= {rx_shift[6:0], mosi};
-        bit_cnt  <= bit_cnt + 4'd1;
+        bit_cnt  <= bit_cnt + 3'd1;
       end
       if (sclk_f) begin
-        tx_shift <= {tx_shift[6:0], 1'b0};
+        tx_shift <= (bit_cnt == 3'd0) ? tx_hold : {tx_shift[6:0], 1'b0};
       end
     end
   end
