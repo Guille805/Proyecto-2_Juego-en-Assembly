@@ -16,36 +16,6 @@ module pochoco_soc #(
   parameter MemFile    = "sw/game.hex",
   parameter EnableSpi  = 0   // 0 = quita el SPI slave (no usado por game.s) para ahorrar LUTs/FFs
 ) (
-  ...
-);
-  ...
-
-  wire [31:0] spi_rdata;
-  wire        spi_miso_int;
-
-  generate
-    if (EnableSpi) begin : g_spi
-      pochoco_spi_slave u_spi (
-        .clk_i      (clk),
-        .rst_ni     (rst_ni),
-        .sel_i      (spi_sel),
-        .req_i      (spi_req),
-        .we_i       (data_we),
-        .addr_i     (data_addr[7:0]),
-        .wdata_i    (data_wdata),
-        .be_i       (data_be),
-        .rdata_o    (spi_rdata),
-        .spi_sclk_i (i_SPI_SCLK),
-        .spi_mosi_i (i_SPI_MOSI),
-        .spi_cs_n_i (i_SPI_CS_n),
-        .spi_miso_o (spi_miso_int)
-      );
-    end else begin : g_no_spi
-      assign spi_rdata    = 32'b0;
-      assign spi_miso_int = 1'b0;
-    end
-  endgenerate
-  assign o_SPI_MISO = spi_miso_int;
   input  wire       i_Clk,
 
   output wire [3:0] o_LED,
