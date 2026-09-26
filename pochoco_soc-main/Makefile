@@ -32,7 +32,7 @@ sw/game.hex: sw/game.s sw/assembler.py
 
 # Step 1: Synthesis using Yosys
 $(JSON): $(SRC) sw/game.hex Makefile
-	yosys -p "read_verilog $(SRC); synth_ice40 -noabc -top $(TOP) -json ${TOP}.json; stat"
+	yosys -p "read_verilog $(SRC); synth_ice40 -top $(TOP) -json ${TOP}.json; stat"
 
 # Step 2: Place and Route using NextPNR
 $(ASC): $(JSON) $(PCF) Makefile
