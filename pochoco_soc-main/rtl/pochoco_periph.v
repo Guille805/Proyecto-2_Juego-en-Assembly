@@ -78,7 +78,8 @@ module pochoco_periph (
   end
   
   // Go Board LEDs are active-low: invert the output
-  assign leds_o = ~led_q;
+  // Also invert the value: 0 means OFF (all bits 1), F means ON (all bits 0)
+  assign leds_o = led_q;  // Direct output, no inversion here
 
   // Hex to 7-segment decoder function
   function [6:0] hex2seg;
