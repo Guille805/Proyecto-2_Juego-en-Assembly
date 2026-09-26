@@ -79,7 +79,7 @@ module pochoco_periph (
   
   // Go Board LEDs are active-low: invert the output
   // Also invert the value: 0 means OFF (all bits 1), F means ON (all bits 0)
-  assign leds_o = led_q;  // Direct output, no inversion here
+  assign leds_o = ~led_q;  // INVERT: Go Board expects active-low
 
   // Hex to 7-segment decoder function
   function [6:0] hex2seg;
@@ -115,9 +115,11 @@ module pochoco_periph (
     if (!rst_ni) rdata_o <= 32'b0;
     else if (access & ~we_i) begin
       case (off)
-        6'd2: rdata_o <= {28'b0, btn_q}; // Buttons (now active-high after inversion)
-        6'd4: rdata_o <= led_cycle_q;    // Timestamp of last LED write
-        6'd3: rdata_o <= cycle_q;        // Contador de ciclos
+        6'd0: rdata_o <= {28'b0, digit_q};    // 0x00 -> Display register
+        6'd1: rdata_o <= {28'b0, led_q};      // 0x04 -> LED status register (read-only)
+        6'd2: rdata_o <= {28'b0, btn_q};      // 0x08 -> Debounced button inputs
+        6'd3: rdata_o <= cycle_q;             // 0x0C -> Free-running cycle counter
+        6'd4: rdata_o <= led_cycle_q;         // 0x10 -> Cycle counter captured on LED write
         default: rdata_o <= 32'b0;
       endcase
     end
