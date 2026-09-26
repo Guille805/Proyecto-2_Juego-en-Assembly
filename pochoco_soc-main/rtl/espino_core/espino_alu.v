@@ -33,19 +33,24 @@ module espino_alu (
                    ALU_LTU  = 4'd14,
                    ALU_GEU  = 4'd15;
 
-  wire signed [31:0] a_s;
-  wire signed [31:0] b_s;
-  assign a_s = operand_a_i;
-  assign b_s = operand_b_i;
+  // Un solo sumador/restador de 33 bits sirve para ADD, SUB y las 6 comparaciones.
+  // Para todo lo que no es ADD, invertimos b y metemos cin=1  =>  a + ~b + 1 = a - b.
+  wire        sub_mode  = (operator_i != ALU_ADD);
+  wire [31:0] b_mux     = sub_mode ? ~operand_b_i : operand_b_i;
+  wire [32:0] sum_ext   = {1'b0, operand_a_i} + {1'b0, b_mux} + {32'b0, sub_mode};
+  wire [31:0] adder_res = sum_ext[31:0];
+  wire        carry_out = sum_ext[32];
 
-  wire [4:0] shamt;
-  assign shamt = operand_b_i[4:0];
-
-  // Comparisons
-  wire cmp_eq, cmp_lt, cmp_ltu;
-  assign cmp_eq  = (operand_a_i == operand_b_i);
-  assign cmp_lt  = (a_s < b_s);
-  assign cmp_ltu = (operand_a_i < operand_b_i);
+  // a < b (unsigned)  <=>  no hubo acarreo en a + ~b + 1
+  wire cmp_ltu = ~carry_out;
+  // a == b  <=>  a - b == 0
+  wire cmp_eq  = (adder_res == 32'b0);
+  // a < b (signed): signo del resultado corregido por overflow de la resta
+  wire sign_a = operand_a_i[31];
+  wire sign_b = operand_b_i[31];
+  wire sign_r = adder_res[31];
+  wire ovf    = (sign_a ^ sign_b) & (sign_a ^ sign_r);
+  wire cmp_lt = sign_r ^ ovf;
 
   always @* begin
     case (operator_i)
@@ -59,21 +64,17 @@ module espino_alu (
     endcase
   end
 
-  // Main result
   always @* begin
     case (operator_i)
-      ALU_ADD:  result_o = operand_a_i + operand_b_i;
-      ALU_SUB:  result_o = operand_a_i - operand_b_i;
+      ALU_ADD:  result_o = adder_res;              // b_mux=b, cin=0 => a+b
+      ALU_SUB:  result_o = adder_res;               // b_mux=~b, cin=1 => a-b
       ALU_XOR:  result_o = operand_a_i ^ operand_b_i;
       ALU_OR:   result_o = operand_a_i | operand_b_i;
       ALU_AND:  result_o = operand_a_i & operand_b_i;
       ALU_SLT:  result_o = {31'b0, cmp_lt};
       ALU_SLTU: result_o = {31'b0, cmp_ltu};
       // Shifts disabled to save LUTs
-      // ALU_SLL:  result_o = operand_a_i << shamt;
-      // ALU_SRL:  result_o = operand_a_i >> shamt;
-      // ALU_SRA:  result_o = a_s >>> shamt;
-      default:  result_o = operand_a_i + operand_b_i;
+      default:  result_o = adder_res;               // igual que antes: default = a+b
     endcase
   end
 
