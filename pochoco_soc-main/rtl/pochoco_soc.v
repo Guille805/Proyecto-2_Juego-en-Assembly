@@ -14,7 +14,7 @@
 module pochoco_soc #(
   parameter NumWords   = 512,
   parameter MemFile    = "sw/game.hex",
-  parameter EnableSpi  = 1   // 0 = quita el SPI slave (no usado por game.s) para ahorrar LUTs/FFs
+  parameter EnableSpi  = 0   // 0 = quita el SPI slave (no usado por game.s) para ahorrar LUTs/FFs
 ) (
   ...
 );
