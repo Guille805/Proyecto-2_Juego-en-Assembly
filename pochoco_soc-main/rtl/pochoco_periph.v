@@ -34,7 +34,9 @@ module pochoco_periph (
   reg [31:0] led_cycle_q;
   reg [3:0] btn_meta_q, btn_sync_q, btn_candidate_q, btn_q;
   reg [17:0] debounce_q;
+  
   // 10 ms stable vector at 25 MHz; two flip-flops synchronize the inputs.
+  // Go Board buttons are active-low: invert to get active-high logic for the game
   always @(posedge clk_i or negedge rst_ni) begin
     if (!rst_ni) begin
       btn_meta_q <= 0;
@@ -43,7 +45,7 @@ module pochoco_periph (
       btn_q <= 0;
       debounce_q <= 0;
     end else begin
-      btn_meta_q <= btn_i;
+      btn_meta_q <= ~btn_i;  // Invert: Go Board is active-low
       btn_sync_q <= btn_meta_q;
       if (btn_sync_q != btn_candidate_q) begin
         btn_candidate_q <= btn_sync_q;
@@ -74,7 +76,9 @@ module pochoco_periph (
       end
     end
   end
-  assign leds_o = led_q;
+  
+  // Go Board LEDs are active-low: invert the output
+  assign leds_o = ~led_q;
 
   // Hex to 7-segment decoder function
   function [6:0] hex2seg;
@@ -110,11 +114,10 @@ module pochoco_periph (
     if (!rst_ni) rdata_o <= 32'b0;
     else if (access & ~we_i) begin
       case (off)
-        6'd2: rdata_o <= {28'b0, btn_q}; // Buttons
-        6'd4: rdata_o <= led_cycle_q; // Timestamp of last LED write
-        6'd3: rdata_o <= cycle_q;        // Contadore de ciclos
+        6'd2: rdata_o <= {28'b0, btn_q}; // Buttons (now active-high after inversion)
+        6'd4: rdata_o <= led_cycle_q;    // Timestamp of last LED write
+        6'd3: rdata_o <= cycle_q;        // Contador de ciclos
         default: rdata_o <= 32'b0;
-        
       endcase
     end
   end
