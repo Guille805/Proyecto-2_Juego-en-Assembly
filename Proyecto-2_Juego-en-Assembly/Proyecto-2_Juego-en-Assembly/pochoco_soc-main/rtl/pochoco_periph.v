@@ -1,0 +1,128 @@
+// Copyright 2026 Universidad de los Andes.
+// Licensed under the Solderpad Hardware License, Version 0.51 (the "License");
+// you may not use this file except in compliance with the License.
+// SPDX-License-Identifier: SHL-0.51
+//
+// Course: Arquitectura de Computadores (2026)
+// 
+// Authors:
+// - Nicolás Villegas <navillegas@miuandes.cl>
+
+module pochoco_periph (
+  input  wire        clk_i,
+  input  wire        rst_ni,
+  input  wire        sel_i,
+  input  wire        req_i,
+  input  wire        we_i,
+  input  wire [7:0]  addr_i,
+  input  wire [31:0] wdata_i,
+  input  wire [3:0]  be_i,
+  output reg  [31:0] rdata_o,
+  output wire [3:0]  leds_o,
+  input  wire [3:0]  btn_i,
+  output wire [6:0]  seg1_o,
+  output wire [6:0]  seg2_o
+);
+
+  wire [5:0] off    = addr_i[7:2];
+  wire       access = sel_i & req_i;
+
+  // LEDs and raw digit registers se le agrego 32 bits para contar ciclos
+  reg [3:0]  led_q;
+  reg [7:0]  digit_q;
+  reg [31:0] cycle_q;
+  reg [31:0] led_cycle_q;
+  reg [3:0] btn_meta_q, btn_sync_q, btn_candidate_q, btn_q;
+  reg [17:0] debounce_q;
+  
+  // 10 ms stable vector at 25 MHz; two flip-flops synchronize the inputs.
+  // Go Board buttons are active-high (pressed = 1): no inversion needed
+  always @(posedge clk_i or negedge rst_ni) begin
+    if (!rst_ni) begin
+      btn_meta_q <= 0;
+      btn_sync_q <= 0;
+      btn_candidate_q <= 0;
+      btn_q <= 0;
+      debounce_q <= 0;
+    end else begin
+      btn_meta_q <= btn_i;
+      btn_sync_q <= btn_meta_q;
+      if (btn_sync_q != btn_candidate_q) begin
+        btn_candidate_q <= btn_sync_q;
+        debounce_q <= 0;
+      end else if (debounce_q == 18'd249999) begin
+        btn_q <= btn_candidate_q;
+      end else debounce_q <= debounce_q + 1'b1;
+    end
+  end
+  
+  always @(posedge clk_i or negedge rst_ni) begin
+    if (!rst_ni) begin
+      led_q   <= 4'b0;
+      digit_q <= 8'b0;
+      cycle_q <= 32'b0;
+      led_cycle_q <= 32'b0;
+    end else begin
+      cycle_q <= cycle_q + 32'd1;
+      if (access & we_i & be_i[0]) begin
+        case (off)
+          6'd0: digit_q <= wdata_i[7:0];
+          6'd1: begin
+            led_q <= wdata_i[3:0];
+            led_cycle_q <= cycle_q;
+          end
+          default: ;
+        endcase
+      end
+    end
+  end
+  
+  // Go Board LEDs are active-high: direct output
+  // The software writes 0xF for all on, 0x1/0x2/0x4/0x8 for individual LEDs
+  assign leds_o = led_q;
+
+  // Hex to 7-segment decoder function
+  function [6:0] hex2seg;
+    input [3:0] hex;
+    begin
+      case (hex)
+        4'h0: hex2seg = 7'b0111111; // 0
+        4'h1: hex2seg = 7'b0000110; // 1
+        4'h2: hex2seg = 7'b1011011; // 2
+        4'h3: hex2seg = 7'b1001111; // 3
+        4'h4: hex2seg = 7'b1100110; // 4
+        4'h5: hex2seg = 7'b1101101; // 5
+        4'h6: hex2seg = 7'b1111101; // 6
+        4'h7: hex2seg = 7'b0000111; // 7
+        4'h8: hex2seg = 7'b1111111; // 8
+        4'h9: hex2seg = 7'b1101111; // 9
+        4'hA: hex2seg = 7'b1110111; // A
+        4'hB: hex2seg = 7'b1111100; // b
+        4'hC: hex2seg = 7'b0111001; // C
+        4'hD: hex2seg = 7'b1011110; // d
+        4'hE: hex2seg = 7'b1111001; // E
+        4'hF: hex2seg = 7'b1110001; // F
+        default: hex2seg = 7'b0000000;
+      endcase
+    end
+  endfunction
+
+  assign seg1_o = hex2seg(digit_q[7:4]);
+  assign seg2_o = hex2seg(digit_q[3:0]);
+
+  // Registered read data
+  always @(posedge clk_i or negedge rst_ni) begin
+    if (!rst_ni) rdata_o <= 32'b0;
+    else if (access & ~we_i) begin
+      case (off)
+        6'd0: rdata_o <= {28'b0, digit_q};    // 0x00 -> Display register
+        6'd1: rdata_o <= {28'b0, led_q};      // 0x04 -> LED status register (read-only)
+        6'd2: rdata_o <= {28'b0, btn_q};      // 0x08 -> Debounced button inputs
+        6'd3: rdata_o <= cycle_q;             // 0x0C -> Free-running cycle counter
+        6'd4: rdata_o <= led_cycle_q;         // 0x10 -> Cycle counter captured on LED write
+        default: rdata_o <= 32'b0;
+      endcase
+    end
+  end
+
+endmodule
